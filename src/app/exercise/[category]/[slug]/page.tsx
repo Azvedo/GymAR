@@ -1,15 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import {
-  type AnimationClip,
-  AnimationMixer,
-  type Group,
-  HemisphereLight,
-  PerspectiveCamera,
-  Scene,
-  WebGLRenderer,
-} from "three";
+import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { ARButton } from "three/examples/jsm/webxr/ARButton";
 
@@ -17,15 +9,20 @@ export default function Home() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const renderer = new WebGLRenderer({ antialias: true, alpha: true });
-    let mixer: AnimationMixer;
-    let model: Group | null = null;
-    let hitTestSource: XRHitTestSource | null = null;
-    let localSpace: XRReferenceSpace | null = null;
-    let hitTestRequested = false;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    let mixer: THREE.AnimationMixer;
+    let model: THREE.Group | null = null;
+    let isDragging = false;
+    let previousX = 0;
 
-    const scene = new Scene();
-    const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(
+      70,
+      window.innerWidth / window.innerHeight,
+      0.01,
+      20
+    );
+
 
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
@@ -35,85 +32,76 @@ export default function Home() {
       ARButton.createButton(renderer, { requiredFeatures: ["hit-test"] })
     );
 
-    const light = new HemisphereLight(0xffffff, 0xbbbbff, 1);
+    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
     light.position.set(0.5, 1, 0.25);
     scene.add(light);
 
     const loader = new GLTFLoader();
     loader.load("/models/Sumo_high_pull.glb", (gltf) => {
-      model = gltf.scene as Group;
+      model = gltf.scene;
       model.scale.set(0.2, 0.2, 0.2);
-      model.visible = false;
+      model.position.set(0, -0.2, -0.5); // Move o modelo mais para baixo no eixo Y
       scene.add(model);
 
-      mixer = new AnimationMixer(model);
-      gltf.animations.forEach((clip) => {
-        if (mixer && clip) {
-          const animationClip = clip as AnimationClip;
-          mixer.clipAction(animationClip).play();
-        }
-      });
+      mixer = new THREE.AnimationMixer(model);
+      gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
     });
 
-    renderer.setAnimationLoop((timestamp, frame) => {
-      if (frame && !hitTestRequested) {
-        const session = renderer.xr.getSession();
-        if (session) {
-          void session.requestReferenceSpace("viewer").then((refSpace) => {
-            // Type assertion for WebXR session which has requestHitTestSource
-            const xrSession = session as XRSession & {
-              requestHitTestSource: (options: { space: XRReferenceSpace }) => Promise<XRHitTestSource>;
-            };
-            if (xrSession.requestHitTestSource && refSpace) {
-              void xrSession.requestHitTestSource?.({ space: refSpace }).then((source: XRHitTestSource | undefined) => {
-                if (source) {
-                  hitTestSource = source;
-                  localSpace = renderer.xr.getReferenceSpace();
-                }
-              }).catch((error: unknown) => {
-                console.error("Failed to get hit test source:", error);
-              });
-            }
-          }).catch((error: unknown) => {
-            console.error("Failed to get reference space:", error);
-          });
-
-          session.addEventListener("end", () => {
-          hitTestSource = null;
-          hitTestRequested = false;
-        });
-
-          hitTestRequested = true;
-        }
+    // Mouse event handlers
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.button === 0) { 
+        isDragging = true;
+        previousX = event.clientX;
       }
 
-      if (frame && hitTestSource && localSpace && model) {
-        const hitTestResults = frame.getHitTestResults(hitTestSource);
-        if (hitTestResults.length > 0) {
-          const hit = hitTestResults[0];
-          if (hit) {
-            const pose = hit.getPose(localSpace);
-            if (pose) {
-              model.visible = true;
-              model.position.set(
-                pose.transform.position.x,
-                pose.transform.position.y,
-                pose.transform.position.z
-              );
-              model.rotation.set(0, Math.PI, 0);
-            }
-          }
-        }
-      }
+      else isDragging = false;
+    };
 
+    const onMouseMove = (event: MouseEvent) => {
+      if (isDragging && model) {
+        const deltaX = event.clientX - previousX;
+        model.rotation.y += deltaX * 0.01;
+        previousX = event.clientX;
+      }
+    };
+
+    const onMouseUp = (event: MouseEvent) => {
+      isDragging = false;
+    };
+
+    // Attach listeners after domElement is in the DOM
+    const domElement = renderer.domElement;
+    domElement.addEventListener("mousedown", onMouseDown);
+    domElement.addEventListener("mousemove", onMouseMove);
+    domElement.addEventListener("mouseup", onMouseUp);
+    domElement.addEventListener("mouseleave", onMouseUp);
+    domElement.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    renderer.setAnimationLoop(() => {
       if (mixer) mixer.update(0.01);
       renderer.render(scene, camera);
     });
 
     return () => {
       renderer.dispose();
+      domElement.removeEventListener("mousedown", onMouseDown);
+      domElement.removeEventListener("mousemove", onMouseMove);
+      domElement.removeEventListener("mouseup", onMouseUp);
+      domElement.removeEventListener("mouseleave", onMouseUp);
+      domElement.removeEventListener("contextmenu", (e) => e.preventDefault());
     };
   }, []);
 
-  return <div ref={containerRef} style={{ width: "100vw", height: "100vh" }} />;
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        width: "100vw",
+        height: "100vh",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    />
+  );
 }
